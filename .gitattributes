@@ -1,0 +1,19 @@
+# Normaliza los finales de linea para que el build de Linux en GitHub Actions
+# sea identico al de tu Windows.
+* text=auto eol=lf
+
+# Sin transformacion
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.mp4 binary
+*.pdf binary
+
+# Bloquear de verdad
+package-lock.json -diff

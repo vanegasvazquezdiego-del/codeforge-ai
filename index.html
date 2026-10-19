@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es" data-theme="void">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0d1016" />
+    <title>CodeForge AI — Practica de programacion con copiloto</title>
+    <meta
+      name="description"
+      content="IDE de practica en el navegador: editor Monaco, ejecucion real de codigo en varios lenguajes, ejercicios con tests automaticos y un asistente IA contextual que explica, depura y genera retos."
+    />
+    <link rel="icon" href="%BASE_URL%favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+    />
+    <script>
+      // Aplica el tema antes del primer pintado para evitar el destello blanco.
+      (function () {
+        try {
+          var raw = localStorage.getItem('codeforge:v1:settings');
+          var theme = raw ? (JSON.parse(raw) || {}).theme : 'void';
+          document.documentElement.dataset.theme = theme || 'void';
+        } catch (e) {
+          document.documentElement.dataset.theme = 'void';
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      CodeForge AI necesita JavaScript para funcionar. Activalo y recarga la pagina.
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
