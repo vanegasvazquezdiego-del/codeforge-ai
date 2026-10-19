@@ -140,9 +140,14 @@ Atajos: `1`-`4` cambian de vista, `Ctrl/Cmd + K` abre la paleta de comandos,
 | SQL | Se envia como un programa Python que ejecuta la consulta sobre **SQLite en memoria** con un esquema de ejemplo (departamentos, empleados, proyectos, asignaciones). El esquema, la semilla y tu consulta viajan en base64, asi que no hay escapados que romper nada. La salida lista cabeceras con ` | ` y filas con `-+-`. |
 | HTML, CSS | No se ejecutan: se renderizan en un `iframe` con `sandbox` y sin `allow-same-origin`, de modo que no pueden tocar esta pagina. Los `.css` del proyecto se inyectan solos en el `<head>`. |
 
-Archivos multiples: puedes anadir archivos, marcar cualquiera como entrada y renombrarlos
-con doble clic. El de entrada se ejecuta primero. Java exige que se llame `Main.java`;
-la app lo renombra solo si hace falta.
+Archivos multiples: el explorador de la barra lateral funciona como en VS Code. Puedes crear
+archivos y carpetas (tambien escribiendo una ruta como `src/utiles.py`, que crea las carpetas
+intermedias), renombrar con F2, duplicar y borrar con clic derecho. El archivo marcado con
+estrella es el de entrada y es el que se compila. Java exige que se llame `Main.java` en la
+raiz; la app te lo dice si intentas otra cosa.
+
+Judge0 y Wandbox solo aceptan **un** archivo. Los proyectos con varias piezas necesitan tu
+propia instancia de Piston (Ajustes → Motor de ejecucion → URL base).
 
 ## 8. Atajos dentro del editor
 
@@ -152,7 +157,9 @@ la app lo renombra solo si hace falta.
 | `Ctrl/Cmd + I` | Mostrar u ocultar el copiloto |
 | `Ctrl/Cmd + /` | Comentar linea |
 | `Alt + ↑ / ↓` | Mover la linea |
-| `F2` (en una pestana de archivo) | Renombrar |
+| `F2` (en el explorador o en una pestana) | Renombrar archivo |
+| `Enter` (en el explorador) | Abrir archivo |
+| Clic derecho (en el explorador) | Renombrar, duplicar, marcar como entrada, copiar ruta, eliminar |
 
 ## 9. Estructura del proyecto
 
@@ -185,7 +192,7 @@ codeforge-ai/
    │                       #            profile, activity, toasts
    └─ components/
       ├─ layout/Shell.tsx  # barra superior + menu lateral
-      ├─ editor/           # CodeEditor, FileTabs, LanguagePicker, PreviewPane
+      ├─ editor/           # CodeEditor, FileExplorer, FileTabs, LanguagePicker, PreviewPane
       ├─ console/          # RunConsole
       ├─ assistant/        # AssistantPanel, MessageItem, ExerciseGeneratorModal
       ├─ views/            # EditorView, ExercisesView, ProfileView, SettingsView

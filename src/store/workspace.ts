@@ -4,6 +4,7 @@ import { getLanguage, STARTERS } from '@/lib/languages';
 import { uid } from '@/lib/cn';
 import { EngineError, execute } from '@/lib/engine';
 import { playResultTone } from '@/lib/sound';
+import { ANCHOR_NAME, dirname, filesInFolder, normalizePath, skeletonFor, uniquePath, validatePath } from '@/lib/files';
 import { KEY_WORKSPACE, readJSON, writeJSON } from '@/lib/storage';
 import { useSettings } from './settings';
 import { useActivity } from './activity';
@@ -18,6 +19,18 @@ export function defaultFileName(languageId: LanguageId): string {
 
 function starterFiles(languageId: LanguageId): CodeFile[] {
   return [{ id: uid('f'), name: defaultFileName(languageId), content: STARTERS[languageId], entry: true }];
+}
+
+/** Ruta sugerida para un archivo nuevo dentro de una carpeta cualquiera. */
+export function suggestFileName(languageId: LanguageId, folder: string, label?: string): string {
+  const lang = getLanguage(languageId);
+  const base = label ?? lang.entryName ?? `main.${lang.ext}`;
+  return folder ? `${folder}/${base}` : base;
+}
+
+/** Una carpeta existe si algun archivo cuelga de ella. */
+export function folderExists(files: CodeFile[], folder: string): boolean {
+  return files.some((file) => file.name.startsWith(`${folder}/`));
 }
 
 interface SelectionSnapshot {
@@ -37,10 +50,17 @@ export interface WorkspaceState {
   setLanguage: (id: LanguageId) => void;
   setActive: (id: string) => void;
   updateContent: (id: string, content: string) => void;
+  /** Crea un archivo en `folder`. Devuelve el error o el archivo creado. */
+  createFile: (folder: string, rawName: string) => { ok: boolean; id?: string; error?: string };
+  /** Crea una carpeta escribiendo `padre/nueva`. */
+  createFolder: (folder: string, name: string) => { ok: boolean; path?: string; error?: string };
   addFile: () => void;
-  renameFile: (id: string, name: string) => void;
+  renameFile: (id: string, name: string) => { ok: boolean; error?: string };
+  duplicateFile: (id: string) => { ok: boolean; id?: string; error?: string };
   removeFile: (id: string) => void;
-  setEntry: (id: string) => void;
+  /** Borra una carpeta entera. */
+  removeFolder: (folder: string) => number;
+  setEntry: (id: string) => { ok: boolean; error?: string };
   resetToStarter: () => void;
   setSelection: (snapshot: SelectionSnapshot) => void;
   run: () => Promise<RunResult>;
@@ -119,14 +139,47 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       save({ files });
     },
 
+    createFile: (folder, rawName) => {
+      const state = get();
+      const path = normalizePath(folder ? `${folder}/${rawName}` : rawName);
+      const problem = validatePath(path, state.files);
+      if (problem) return { ok: false, error: problem.message };
+
+      const file: CodeFile = {
+        id: uid('f'),
+        name: path,
+        content: skeletonFor(state.languageId, path),
+        entry: false,
+      };
+      const files = [...state.files, file];
+      set({ files, activeId: file.id });
+      save({ files, activeId: file.id });
+      return { ok: true, id: file.id };
+    },
+
+    createFolder: (folder, name) => {
+      const state = get();
+      const path = normalizePath(folder ? `${folder}/${name}` : name);
+      if (!path) return { ok: false, error: 'El nombre de la carpeta no puede estar vacio.' };
+      if (folderExists(state.files, path)) return { ok: false, error: `Ya existe una carpeta llamada "${path}".` };
+
+      // Las carpetas son implicitas: un archivo ancla las hace existir.
+      const anchor = uniquePath(`${path}/${ANCHOR_NAME}`, state.files);
+      const file: CodeFile = { id: uid('f'), name: anchor, content: '', entry: false };
+      const files = [...state.files, file];
+      set({ files });
+      save({ files });
+      return { ok: true, path };
+    },
+
     addFile: () => {
       const state = get();
       const lang = getLanguage(state.languageId);
-      const name = `helper.${lang.ext}`;
+      const path = uniquePath(`helper.${lang.ext}`, state.files);
       const file: CodeFile = {
         id: uid('f'),
-        name: state.files.some((f) => f.name === name) ? `helper-${state.files.length}.${lang.ext}` : name,
-        content: lang.kind === 'sql' ? '-- Archivo auxiliar\n' : lang.kind === 'preview' ? `/* ${name} */\n` : `\n`,
+        name: path,
+        content: skeletonFor(state.languageId, path),
         entry: false,
       };
       const files = [...state.files, file];
@@ -135,11 +188,36 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     },
 
     renameFile: (id, name) => {
-      const clean = name.trim().replace(/\s+/g, '-');
-      if (!clean) return;
-      const files = get().files.map((f) => (f.id === id ? { ...f, name: clean } : f));
+      const state = get();
+      const current = state.files.find((file) => file.id === id);
+      if (!current) return { ok: false, error: 'El archivo ya no existe.' };
+
+      // Renombrar conserva la carpeta salvo que se escriba una ruta con "/".
+      const path = name.includes('/') ? normalizePath(name) : normalizePath(`${dirname(current.name)}/${name}`);
+      if (path === current.name) return { ok: true };
+
+      const problem = validatePath(path, state.files.filter((file) => file.id !== id));
+      if (problem) return { ok: false, error: problem.message };
+
+      const files = state.files.map((file) => (file.id === id ? { ...file, name: path } : file));
       set({ files });
       save({ files });
+      return { ok: true };
+    },
+
+    duplicateFile: (id) => {
+      const state = get();
+      const current = state.files.find((file) => file.id === id);
+      if (!current) return { ok: false, error: 'El archivo ya no existe.' };
+      // `current.name` ya es la ruta completa: uniquePath le anade el numero
+      // sin volver a anteponer la carpeta (si no, `src/utiles.py` -> `src/src/utiles.py`).
+      const path = uniquePath(current.name, state.files);
+      if (path === current.name) return { ok: false, error: 'Ya existe una copia con ese nombre.' };
+      const copy: CodeFile = { ...current, id: uid('f'), name: path };
+      const files = [...state.files, copy];
+      set({ files, activeId: copy.id });
+      save({ files, activeId: copy.id });
+      return { ok: true, id: copy.id };
     },
 
     removeFile: (id) => {
@@ -152,10 +230,35 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       save({ files, activeId });
     },
 
+    removeFolder: (folder) => {
+      const state = get();
+      const doomed = filesInFolder(state.files, folder);
+      const files = state.files.filter((file) => !doomed.includes(file));
+      if (!files.length) return 0;
+      if (!files.some((f) => f.entry)) files[0] = { ...files[0], entry: true };
+      const activeId = doomed.some((f) => f.id === state.activeId)
+        ? (files.find((f) => f.entry)?.id ?? files[0].id)
+        : state.activeId;
+      set({ files, activeId });
+      save({ files, activeId });
+      return doomed.length;
+    },
+
     setEntry: (id) => {
-      const files = get().files.map((f) => ({ ...f, entry: f.id === id }));
+      const state = get();
+      const target = state.files.find((file) => file.id === id);
+      if (!target) return { ok: false, error: 'El archivo ya no existe.' };
+
+      // Java exige que la clase principal se llame Main.java.
+      const lang = getLanguage(state.languageId);
+      if (lang.entryName && target.name !== lang.entryName) {
+        return { ok: false, error: `En ${lang.label} el archivo de entrada debe llamarse ${lang.entryName}.` };
+      }
+
+      const files = state.files.map((f) => ({ ...f, entry: f.id === id }));
       set({ files });
       save({ files });
+      return { ok: true };
     },
 
     resetToStarter: () => {

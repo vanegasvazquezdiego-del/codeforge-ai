@@ -487,6 +487,11 @@ export async function execute(
     );
   }
 
+  // Si el proyecto es multi-archivo, se explica por que el resto no participa.
+  const discarded = multiFile
+    ? ` Judge0 y Wandbox solo aceptan un archivo, asi que no se han probado.`
+    : '';
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 35_000);
   const onAbort = () => controller.abort();
@@ -521,7 +526,7 @@ export async function execute(
       }
     }
 
-    const message = `Ningun motor pudo ejecutar el programa. ${problems.join(' ')}`;
+    const message = `Ningun motor pudo ejecutar el programa.${discarded} ${problems.join(' ')}`;
     return errorResult(languageId, message, Math.round(performance.now() - started));
   } finally {
     clearTimeout(timeout);

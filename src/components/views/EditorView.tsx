@@ -1,5 +1,5 @@
-import { Suspense, lazy, useCallback } from 'react';
-import { ChevronDown, Play, RotateCcw, Square, Terminal, Wand2 } from 'lucide-react';
+import { Suspense, lazy, useCallback, useState } from 'react';
+import { ChevronDown, Files, Play, RotateCcw, Square, Terminal, Wand2 } from 'lucide-react';
 import { useWorkspace } from '@/store/workspace';
 import { useSettings } from '@/store/settings';
 import { getLanguage } from '@/lib/languages';
@@ -10,6 +10,7 @@ import { Popover } from '@/components/ui/Popover';
 import { Badge, Spinner } from '@/components/ui/Primitives';
 import { LanguagePicker } from '@/components/editor/LanguagePicker';
 import { FileTabs } from '@/components/editor/FileTabs';
+import { FileExplorer } from '@/components/editor/FileExplorer';
 import { PreviewPane } from '@/components/editor/PreviewPane';
 import { RunConsole, RunStatusChip } from '@/components/console/RunConsole';
 import { toast } from '@/store/toasts';
@@ -27,6 +28,8 @@ export function EditorView({ onToggleAssistant }: { onToggleAssistant: () => voi
   const run = useWorkspace((s) => s.run);
   const cancel = useWorkspace((s) => s.cancel);
   const resetToStarter = useWorkspace((s) => s.resetToStarter);
+  // El explorador arranca abierto en escritorio y cerrado en movil.
+  const [explorerOpen, setExplorerOpen] = useState(() => window.innerWidth >= 768);
 
   const stdin = useSettings((s) => s.stdin);
   const setStdin = useSettings((s) => s.setStdin);
@@ -107,6 +110,14 @@ export function EditorView({ onToggleAssistant }: { onToggleAssistant: () => voi
         <div className="ml-auto flex items-center gap-2">
           <RunStatusChip run={runs[0] ?? null} />
 
+          <IconButton
+            label={explorerOpen ? 'Ocultar el explorador de archivos' : 'Mostrar el explorador de archivos'}
+            onClick={() => setExplorerOpen((v) => !v)}
+            active={explorerOpen}
+          >
+            <Files className="h-4 w-4" />
+          </IconButton>
+
           <IconButton label="Restaurar plantilla inicial" onClick={resetToStarter}>
             <RotateCcw className="h-4 w-4" />
           </IconButton>
@@ -136,30 +147,41 @@ export function EditorView({ onToggleAssistant }: { onToggleAssistant: () => voi
       <FileTabs />
 
       {/* --------------------------------------------------------- Workspace */}
-      <div className={cn('flex min-h-0 flex-1', isPreview && 'flex-col xl:flex-row')}>
-        <div
-          className={cn(
-            'min-h-0 min-w-0 flex-1 bg-code-bg',
-            isPreview && 'min-h-[180px] flex-[3]',
-          )}
-        >
-          <Suspense
-            fallback={
-              <div className="flex h-full items-center justify-center gap-2.5 bg-code-bg text-[0.82rem] text-muted">
-                <Spinner className="text-accent" />
-                Preparando el editor…
-              </div>
-            }
-          >
-            <CodeEditor onRun={handleRun} onToggleAssistant={toggleAssistant} />
-          </Suspense>
-        </div>
-
-        {isPreview && (
-          <div className="h-[42%] min-h-[200px] shrink-0 border-t border-line xl:h-auto xl:w-[26rem] xl:border-t-0 xl:border-l 2xl:w-[32rem]">
-            <PreviewPane files={files} />
+      <div className="flex min-h-0 flex-1">
+        {explorerOpen && (
+          <div className="hidden md:flex">
+            <FileExplorer
+              collapsed={false}
+              onToggle={() => setExplorerOpen(false)}
+              languageId={languageId}
+            />
           </div>
         )}
+        <div className={cn('flex min-h-0 flex-1 flex-col', isPreview && 'xl:flex-row')}>
+          <div
+            className={cn(
+              'min-h-0 min-w-0 flex-1 bg-code-bg',
+              isPreview && 'min-h-[180px] flex-[3]',
+            )}
+          >
+            <Suspense
+              fallback={
+                <div className="flex h-full items-center justify-center gap-2.5 bg-code-bg text-[0.82rem] text-muted">
+                  <Spinner className="text-accent" />
+                  Preparando el editor…
+                </div>
+              }
+            >
+              <CodeEditor onRun={handleRun} onToggleAssistant={toggleAssistant} />
+            </Suspense>
+          </div>
+
+          {isPreview && (
+            <div className="h-[42%] min-h-[200px] shrink-0 border-t border-line xl:h-auto xl:w-[26rem] xl:border-t-0 xl:border-l 2xl:w-[32rem]">
+              <PreviewPane files={files} />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ----------------------------------------------------------- Console */}

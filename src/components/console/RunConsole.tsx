@@ -116,7 +116,16 @@ export function RunConsole({ running }: { running: boolean }) {
       </header>
 
       <div className="scroll-thin max-h-64 min-h-24 overflow-auto px-3 py-2.5">
-        {isEmptyStream ? (
+        {latest.engineError ? (
+          // Fallos de infraestructura: el motivo se lee sin cambiar de pestaña.
+          <div className="flex items-start gap-2.5 rounded-md border border-warn/35 bg-warn-soft px-3 py-2.5">
+            <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
+            <div className="min-w-0">
+              <p className="text-[0.85rem] font-medium text-ink">No se pudo ejecutar el programa</p>
+              <p className="mt-1 text-[0.82rem] leading-relaxed text-muted">{latest.engineError}</p>
+            </div>
+          </div>
+        ) : isEmptyStream ? (
           <p className="py-3 text-center text-[0.82rem] text-faint">
             {tab === 'out' ? 'El programa no escribio nada en stdout.' : 'Sin errores: stderr vacio.'}
           </p>

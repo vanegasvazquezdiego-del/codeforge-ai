@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { FilePlus2, MoreVertical, RotateCcw, Star, X } from 'lucide-react';
+import { MoreVertical, RotateCcw, Star, X } from 'lucide-react';
 import { useWorkspace } from '@/store/workspace';
 import { getLanguage } from '@/lib/languages';
-import { Button, IconButton } from '@/components/ui/Button';
+import { basename, dirname } from '@/lib/files';
+import { IconButton } from '@/components/ui/Button';
 import { MenuItem, Popover } from '@/components/ui/Popover';
 import { toast } from '@/store/toasts';
 import { cn } from '@/lib/cn';
@@ -12,7 +13,6 @@ export function FileTabs() {
   const activeId = useWorkspace((s) => s.activeId);
   const languageId = useWorkspace((s) => s.languageId);
   const setActive = useWorkspace((s) => s.setActive);
-  const addFile = useWorkspace((s) => s.addFile);
   const removeFile = useWorkspace((s) => s.removeFile);
   const setEntry = useWorkspace((s) => s.setEntry);
   const resetToStarter = useWorkspace((s) => s.resetToStarter);
@@ -21,35 +21,44 @@ export function FileTabs() {
 
   return (
     <div className="flex items-center gap-1.5 border-b border-line bg-bg-deep/60 px-2">
-      <div className="scroll-thin flex flex-1 items-stretch gap-1 overflow-x-auto" role="tablist" aria-label="Archivos del proyecto">
+      <div
+        className="scroll-thin flex flex-1 items-stretch gap-1 overflow-x-auto"
+        role="tablist"
+        aria-label="Archivos abiertos"
+      >
         {files.map((file) => {
           const active = file.id === activeId;
+          const folder = dirname(file.name);
           return (
             <Tab
               key={file.id}
               id={file.id}
-              name={file.name}
+              path={file.name}
+              folder={folder}
               active={active}
               entry={file.entry}
               canDelete={files.length > 1}
               onSelect={() => setActive(file.id)}
               onDelete={() => {
                 removeFile(file.id);
-                toast.info(`Se elimino ${file.name}`);
+                toast.info(`Se elimino ${basename(file.name)}`);
               }}
             />
           );
         })}
-        <IconButton label="Nuevo archivo" onClick={addFile} className="my-auto h-7 w-7 shrink-0">
-          <FilePlus2 className="h-3.5 w-3.5" />
-        </IconButton>
       </div>
 
       <Popover
         align="end"
-        width="w-56"
+        width="w-60"
         trigger={({ toggle, id, open }) => (
-          <IconButton label="Acciones del proyecto" id={id} onClick={toggle} active={open} className="my-auto h-7 w-7 shrink-0">
+          <IconButton
+            label="Acciones del proyecto"
+            id={id}
+            onClick={toggle}
+            active={open}
+            className="my-auto h-7 w-7 shrink-0"
+          >
             <MoreVertical className="h-3.5 w-3.5" />
           </IconButton>
         )}
@@ -70,12 +79,13 @@ export function FileTabs() {
               onClick={() => {
                 const target = files.find((f) => !f.entry);
                 if (!target) {
-                  toast.warn('Ya hay un archivo de entrada', 'Marca otro como entrada para ejecutar varios.');
+                  toast.warn('Ya hay un archivo de entrada', 'No hay mas archivos que marcar.');
                   return;
                 }
-                setEntry(target.id);
+                const result = setEntry(target.id);
                 close();
-                toast.ok('Archivo de entrada cambiado', `Ahora se ejecuta ${target.name}.`);
+                if (!result.ok) toast.warn('No se pudo cambiar', result.error);
+                else toast.ok('Archivo de entrada cambiado', `Ahora se ejecuta ${target.name}.`);
               }}
             >
               <Star className="h-3.5 w-3.5" />
@@ -90,7 +100,8 @@ export function FileTabs() {
 
 function Tab({
   id,
-  name,
+  path,
+  folder,
   active,
   entry,
   canDelete,
@@ -98,7 +109,8 @@ function Tab({
   onDelete,
 }: {
   id: string;
-  name: string;
+  path: string;
+  folder: string;
   active: boolean;
   entry: boolean;
   canDelete: boolean;
@@ -106,16 +118,27 @@ function Tab({
   onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(name);
+  const [draft, setDraft] = useState(path);
   const inputRef = useRef<HTMLInputElement>(null);
-  const rename = useWorkspace((s) => s.renameFile);
+  const renameFile = useWorkspace((s) => s.renameFile);
+  const name = basename(path);
 
   useEffect(() => {
-    if (editing) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }
+    if (!editing) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
   }, [editing]);
+
+  const commit = () => {
+    const result = renameFile(id, draft);
+    setEditing(false);
+    if (!result.ok) {
+      toast.warn('No se pudo renombrar', result.error);
+      return;
+    }
+    const next = useWorkspace.getState().files.find((file) => file.id === id)?.name;
+    if (next && next !== path) toast.ok('Archivo renombrado', next);
+  };
 
   if (editing) {
     return (
@@ -123,23 +146,19 @@ function Tab({
         className="my-1 flex shrink-0 items-center"
         onSubmit={(e) => {
           e.preventDefault();
-          rename(id, draft);
-          setEditing(false);
+          commit();
         }}
       >
         <input
           ref={inputRef}
           value={draft}
-          aria-label="Nuevo nombre de archivo"
+          aria-label={`Nuevo nombre para ${path}`}
           onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => {
-            rename(id, draft);
-            setEditing(false);
-          }}
+          onBlur={commit}
           onKeyDown={(e) => {
             if (e.key === 'Escape') setEditing(false);
           }}
-          className="h-7 w-36 rounded-sm border border-accent-line bg-bg-deep px-2 font-mono text-[0.75rem] text-ink focus:outline-none"
+          className="h-7 w-44 rounded-sm border border-accent-line bg-bg-deep px-2 font-mono text-[0.75rem] text-ink focus:outline-none"
         />
       </form>
     );
@@ -151,15 +170,21 @@ function Tab({
       aria-selected={active}
       tabIndex={active ? 0 : -1}
       onClick={onSelect}
-      onDoubleClick={() => setEditing(true)}
+      onDoubleClick={() => {
+        setDraft(path);
+        setEditing(true);
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onSelect();
         }
-        if (e.key === 'F2') setEditing(true);
+        if (e.key === 'F2') {
+          setDraft(path);
+          setEditing(true);
+        }
       }}
-      title={`${name}${entry ? ' · archivo de entrada' : ''} — doble clic para renombrar`}
+      title={folder ? `${folder}/${name}` : name}
       className={cn(
         'group my-1 flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 text-[0.78rem]',
         'transition-[background-color,border-color,color] duration-150',
@@ -168,8 +193,13 @@ function Tab({
           : 'border-transparent text-muted hover:bg-elev hover:text-ink',
       )}
     >
-      {entry && <Star aria-label="archivo de entrada" className="h-3 w-3 shrink-0 text-accent" fill="currentColor" />}
-      <span className="font-mono">{name}</span>
+      {entry && (
+        <Star aria-label="archivo de entrada" className="h-3 w-3 shrink-0 text-accent" fill="currentColor" />
+      )}
+      <span className="truncate font-mono">
+        {folder && <span className="text-faint">{folder}/</span>}
+        {name}
+      </span>
       {canDelete && (
         <button
           type="button"
@@ -184,14 +214,5 @@ function Tab({
         </button>
       )}
     </div>
-  );
-}
-
-/** Botón reutilizable para la barra del editor (ejecutar, guardar plantilla…). */
-export function ToolbarButton({ children, onClick, title }: { children: React.ReactNode; onClick: () => void; title: string }) {
-  return (
-    <Button size="xs" variant="ghost" onClick={onClick} title={title} className="font-mono">
-      {children}
-    </Button>
   );
 }
