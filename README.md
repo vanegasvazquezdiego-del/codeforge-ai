@@ -103,6 +103,13 @@ La clave se guarda **solo en este navegador**. Dos modos:
 
 El respaldo JSON que exportas desde el perfil **nunca** incluye la clave.
 
+### Si el generador de ejercicios devuelve un error de formato
+
+El generador pide al modelo un objeto JSON estricto. Si la respuesta llega cortada, la app
+lo dice y puedes subir **Respuesta maxima** en Ajustes → Asistente IA (Gemini usa parte de ese
+presupuesto para razonar). Si el JSON llega mal formado, el error incluye **Ver lo que respondio
+el modelo** con el texto crudo, ademas de permitir regenerar sin cerrar el dialogo.
+
 ## 5. Motores de ejecucion
 
 CodeForge habla con tres motores y **rota entre ellos automaticamente**. Si el primero se

@@ -8,6 +8,7 @@ import { isDuplicate } from '@/lib/exercises';
 import { useSettings } from '@/store/settings';
 import { useProfile } from '@/store/profile';
 import { AiError } from '@/lib/ai';
+import { ExerciseParseError } from '@/lib/prompts';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Field, Segmented, TextArea, Select } from '@/components/ui/Form';
@@ -31,6 +32,7 @@ export function ExerciseGeneratorModal({
   const [level, setLevel] = useState<Level>('Principiante');
   const [extra, setExtra] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [rawReply, setRawReply] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<ExerciseDraft | null>(null);
 
@@ -48,12 +50,14 @@ export function ExerciseGeneratorModal({
       setError(null);
       setPreview(null);
       setExtra('');
+      setRawReply(null);
     }
   }, [open, initialLanguage, settingsLevel]);
 
   const generate = async () => {
     setBusy(true);
     setError(null);
+    setRawReply(null);
     try {
       const draft = await requestExercise(languageId, level, extra);
       if (isDuplicate(exercises, draft.title, languageId)) {
@@ -70,6 +74,9 @@ export function ExerciseGeneratorModal({
       }
       setPreview(draft);
     } catch (err) {
+      // Si el fallo fue de formato, se guarda lo que respondio el modelo:
+      // sin eso el error es un callejon sin salida.
+      setRawReply(err instanceof ExerciseParseError ? err.raw : null);
       setError(
         err instanceof AiError || err instanceof Error
           ? err.message
@@ -216,9 +223,19 @@ export function ExerciseGeneratorModal({
           </Field>
 
           {error && (
-            <p role="alert" className="rounded-md border border-err/35 bg-err-soft px-3 py-2.5 text-[0.82rem] text-err">
-              {error}
-            </p>
+            <div role="alert" className="rounded-md border border-err/35 bg-err-soft px-3 py-2.5 text-[0.82rem] text-err">
+              <p>{error}</p>
+              {rawReply && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[0.76rem] text-err/80 hover:text-err">
+                    Ver lo que respondio el modelo
+                  </summary>
+                  <pre className="scroll-thin mt-1.5 max-h-44 overflow-auto rounded-sm border border-err/25 bg-bg-deep px-2.5 py-2 font-mono text-[0.72rem] leading-relaxed whitespace-pre-wrap break-words text-muted">
+                    {rawReply.slice(0, 4000)}
+                  </pre>
+                </details>
+              )}
+            </div>
           )}
 
           <p className="flex items-start gap-2 text-[0.76rem] leading-snug text-faint">

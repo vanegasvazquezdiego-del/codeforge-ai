@@ -1,7 +1,15 @@
 import { create } from 'zustand';
 import type { AiActionId, AiMessage, AssistantContext, ExerciseDraft, LanguageId, Level } from '@/lib/types';
 import { AiError, chat } from '@/lib/ai';
-import { ACTIONS, EXERCISE_SYSTEM, SYSTEM_PERSONA, buildContext, exercisePrompt, parseExercise } from '@/lib/prompts';
+import {
+  ACTIONS,
+  EXERCISE_SYSTEM,
+  SYSTEM_PERSONA,
+  buildContext,
+  exercisePrompt,
+  ExerciseParseError,
+  parseExercise,
+} from '@/lib/prompts';
 import { uid } from '@/lib/cn';
 import { KEY_ASSISTANT, readJSON, writeJSON } from '@/lib/storage';
 import { useSettings } from './settings';
@@ -165,14 +173,21 @@ export const useAssistant = create<AssistantState>((set, get) => ({
   requestExercise: async (languageId, level, extra) => {
     inflight = new AbortController();
     set({ busy: true });
+    const config = aiConfig();
     try {
       const raw = await chat(
-        aiConfig(),
+        config,
         [
           { role: 'system', content: EXERCISE_SYSTEM },
           { role: 'user', content: exercisePrompt(languageId, level, extra) },
         ],
         inflight.signal,
+        {
+          json: true,
+          // Un ejercicio lleva enunciado, arranque y 3 casos: con el limite
+          // normal la respuesta llega cortada y el JSON queda a medias.
+          minTokens: config.provider === 'gemini' ? 8192 : 4096,
+        },
       );
       const draft = parseExercise(raw, level);
       set({ busy: false });
@@ -180,6 +195,8 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     } catch (err) {
       set({ busy: false });
       if (err instanceof AiError) throw err;
+      // El error de parseo ya trae un mensaje accionable y la respuesta cruda.
+      if (err instanceof ExerciseParseError) throw err;
       // Se conserva la causa real: "el modelo devolvio algo raro" sin detalle
       // no ayuda ni al usuario ni para depurar el prompt.
       const cause = err instanceof Error ? err.message : 'motivo desconocido';

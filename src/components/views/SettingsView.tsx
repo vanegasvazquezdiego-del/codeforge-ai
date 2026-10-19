@@ -343,7 +343,7 @@ export function SettingsView() {
               <Slider
                 value={ai.maxTokens}
                 min={400}
-                max={8000}
+                max={16384}
                 step={200}
                 label="Respuesta maxima"
                 format={(v) => `${v} tokens`}

@@ -108,7 +108,7 @@ export function exercisePrompt(languageId: string, level: Level, extra: string):
 
   if (isMarkup) {
     return `Crea un ejercicio practico de ${lang.label} de nivel ${level}. No se ejecuta en un motor, asi que el enunciado debe describir que se ve en el preview.
-Responde EXCLUSIVAMENTE con un bloque \`\`\`json\`\`\`.`;
+Responde EXCLUSIVAMENTE con un objeto JSON valido, sin texto antes ni despues.`;
   }
 
   const inputRule = lang.stdin
@@ -128,8 +128,7 @@ El enunciado debe:
 
 Casos de prueba: escribe exactamente 3, con ${lang.stdin ? 'stdin' : 'sin stdin'} y la stdout exacta esperada, incluyendo el salto de linea final.
 
-Responde EXCLUSIVAMENTE con un bloque \`\`\`json\`\`\`, sin texto antes ni despues, con esta forma exacta:
-\`\`\`json
+Responde EXCLUSIVAMENTE con un objeto JSON valido, sin texto antes ni despues ni vallas de codigo, con esta forma exacta:
 {
   "title": "Titulo corto en imperativo",
   "statement": "Enunciado en markdown. Usa \\n para los saltos de linea.",
@@ -141,36 +140,146 @@ Responde EXCLUSIVAMENTE con un bloque \`\`\`json\`\`\`, sin texto antes ni despu
     { "label": "Caso limite", "stdin": "0", "expected": "0" },
     { "label": "Caso con negativos", "stdin": "-2 5", "expected": "7" }
   ]
-}
-\`\`\``;
+}`;
 }
 
 export const EXERCISE_SYSTEM = `${SYSTEM_PERSONA}
 
-Ademas, cuando te pidan un ejercicio, devuelves SOLO el bloque JSON con la forma indicada.
-El campo \`starter\` debe compilar y ejecutar (puede no resolver el problema, pero no debe romperse).
+Ademas, cuando te pidan un ejercicio, devuelves SOLO el objeto JSON con la forma indicada.
+El campo \`starter\` lleva codigo sin vallas markdown y debe compilar y ejecutar (puede no resolver el problema, pero no debe romperse).
 El campo \`expected\` es la stdout EXACTA, incluyendo el salto de linea final.`;
 
 /* -------------------------------------------------------------------------
    Parseo tolerante del JSON de ejercicios
    ------------------------------------------------------------------------- */
 
-function extractJsonBlock(raw: string): string {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const body = fenced ? fenced[1] : raw;
-  const start = body.indexOf('{');
-  const end = body.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error('no hay ningun objeto JSON en la respuesta.');
+/** Error de parseo que conserva la respuesta cruda para poder mostrarla. */
+export class ExerciseParseError extends Error {
+  constructor(
+    message: string,
+    readonly raw: string,
+  ) {
+    super(message);
+    this.name = 'ExerciseParseError';
   }
-  // trim + poda de comas colgantes: los modelos casi nunca devuelven JSON puro.
-  const slice = body.slice(start, end + 1).trim().replace(/,\s*([}\]])/g, '$1');
+}
+
+function brief(text: string, max = 140): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
+/**
+ * Recorre el texto desde `from` y devuelve el objeto JSON balanceado.
+ * Respeta cadenas y escapes, asi que una llave o una valla de codigo dentro
+ * de `starter` no se confunde con el cierre del objeto (el fallo clasico).
+ */
+function balancedObject(text: string, from: number): { json: string; closed: boolean } {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = from; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return { json: text.slice(from, i + 1), closed: true };
+    }
+  }
+  return { json: text.slice(from), closed: false };
+}
+
+/** Escapa saltos de linea y tabuladores que el modelo metio crudos en una cadena. */
+function escapeRawControlChars(source: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+
+  for (const ch of source) {
+    if (inString) {
+      if (escaped) {
+        out += ch;
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        out += ch;
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        out += ch;
+        inString = false;
+        continue;
+      }
+      if (ch === '\n') {
+        out += '\\n';
+        continue;
+      }
+      if (ch === '\r') continue;
+      if (ch === '\t') {
+        out += '\\t';
+        continue;
+      }
+      out += ch;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    out += ch;
+  }
+  return out;
+}
+
+export function extractJsonObject(raw: string): Record<string, unknown> {
+  const text = raw.trim();
+  if (!text) throw new ExerciseParseError('El modelo devolvio una respuesta vacia.', raw);
+
+  const start = text.indexOf('{');
+  if (start === -1) {
+    throw new ExerciseParseError(
+      `El modelo respondio con texto en vez de JSON: "${brief(text)}". Vuelve a generar; si insiste, prueba otro modelo.`,
+      raw,
+    );
+  }
+
+  const { json, closed } = balancedObject(text, start);
+  if (!closed) {
+    throw new ExerciseParseError(
+      `La respuesta llego cortada (${text.length} caracteres y el objeto JSON sin cerrar). Sube "Tokens de salida" en Ajustes → Asistente IA, o pide un ejercicio mas corto.`,
+      raw,
+    );
+  }
+
+  // Comas colgantes y saltos de linea crudos: los modelos casi nunca devuelven JSON puro.
+  const repaired = escapeRawControlChars(json).replace(/,\s*([}\]])/g, '$1');
+  let parsed: unknown;
   try {
-    return JSON.stringify(JSON.parse(slice));
+    parsed = JSON.parse(repaired);
   } catch (err) {
-    // El mensaje de JSON.parse incluye la posicion: es lo accionable.
-    throw new Error(`${err instanceof Error ? err.message : 'JSON ilegible'} — recibe: ${slice.slice(0, 160)}`);
+    throw new ExerciseParseError(
+      `El JSON no se pudo leer (${err instanceof Error ? err.message : 'formato invalido'}). Empezo asi: "${brief(json, 180)}"`,
+      raw,
+    );
   }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new ExerciseParseError('El modelo devolvio un JSON, pero no es un objeto de ejercicio.', raw);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/** Quita una valla ``` que envuelva todo el bloque (el editor no la quiere). */
+function stripOuterFence(text: string): string {
+  const match = text.match(/^```[a-zA-Z0-9+#._-]*[ \t]*\n([\s\S]*?)\n?```$/);
+  return match ? match[1].trim() : text;
 }
 
 function cleanText(value: unknown, fallback = ''): string {
@@ -198,12 +307,12 @@ function parseTests(value: unknown): TestCase[] {
 }
 
 export function parseExercise(raw: string, level: Level): ExerciseDraft {
-  const json = JSON.parse(extractJsonBlock(raw)) as Record<string, unknown>;
+  const json = extractJsonObject(raw);
   const statement = cleanText(json.statement);
-  const starter = cleanText(json.starter);
+  const starter = stripOuterFence(cleanText(json.starter));
 
-  if (!statement) throw new Error('El enunciado vino vacio.');
-  if (!starter) throw new Error('El codigo inicial vino vacio.');
+  if (!statement) throw new ExerciseParseError('El enunciado vino vacio.', raw);
+  if (!starter) throw new ExerciseParseError('El codigo inicial vino vacio.', raw);
 
   const concepts = Array.isArray(json.concepts)
     ? (json.concepts as unknown[]).slice(0, 6).map((c) => cleanText(c)).filter(Boolean)

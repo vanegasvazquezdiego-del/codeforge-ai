@@ -48,6 +48,16 @@ export const PROVIDER_NEEDS_KEY: Record<AiSettings['provider'], boolean> = {
   ollama: false,
 };
 
+export interface ChatOptions {
+  /** Pide al proveedor JSON puro (sin vallas) cuando lo soporta. */
+  json?: boolean;
+  /**
+   * Suelo de tokens de salida para esta llamada. Los ejercicios son largos y
+   * en Gemini los tokens de razonamiento consumen el mismo presupuesto.
+   */
+  minTokens?: number;
+}
+
 function requiresKey(config: AiSettings): boolean {
   return PROVIDER_NEEDS_KEY[config.provider];
 }
@@ -139,12 +149,29 @@ async function postJson(url: string, init: RequestInit, signal?: AbortSignal): P
 type GeminiPart = { text: string };
 type GeminiContent = { role: 'user' | 'model'; parts: GeminiPart[] };
 
-async function callGemini(config: AiSettings, turns: ChatTurn[], signal?: AbortSignal): Promise<string> {
+function budget(config: AiSettings, options?: ChatOptions): number {
+  return Math.max(config.maxTokens, options?.minTokens ?? 0);
+}
+
+function truncated(tokens: number): AiError {
+  return new AiError(
+    `La respuesta se corto al llegar a ${tokens} tokens. Sube "Respuesta maxima" en Ajustes → Asistente IA, o pide algo mas corto.`,
+    'empty',
+  );
+}
+
+async function callGemini(
+  config: AiSettings,
+  turns: ChatTurn[],
+  signal?: AbortSignal,
+  options?: ChatOptions,
+): Promise<string> {
   const { system, history } = joinPrompt(turns);
   const contents: GeminiContent[] = history.map((t) => ({
     role: t.role === 'assistant' ? 'model' : 'user',
     parts: [{ text: t.content }],
   }));
+  const tokens = budget(config, options);
 
   const url = `${config.baseUrl.replace(/\/+$/, '')}/models/${encodeURIComponent(config.model)}:generateContent`;
   const data = (await postJson(
@@ -157,23 +184,46 @@ async function callGemini(config: AiSettings, turns: ChatTurn[], signal?: AbortS
         contents,
         generationConfig: {
           temperature: config.temperature,
-          maxOutputTokens: config.maxTokens,
+          maxOutputTokens: tokens,
+          // Gemini acepta forzar JSON: evita vallas y texto alrededor.
+          ...(options?.json ? { responseMimeType: 'application/json' } : {}),
         },
       }),
     },
     signal,
-  )) as { candidates?: Array<{ content?: { parts?: GeminiPart[] } }> };
+  )) as {
+    candidates?: Array<{ content?: { parts?: GeminiPart[] }; finishReason?: string }>;
+    promptFeedback?: { blockReason?: string };
+  };
 
-  const text = (data.candidates?.[0]?.content?.parts ?? [])
+  const blocked = data.promptFeedback?.blockReason;
+  if (blocked) {
+    throw new AiError(`Gemini bloqueo la peticion (${blocked}). Reformula la instruccion.`, 'server');
+  }
+
+  const candidate = data.candidates?.[0];
+  const finish = candidate?.finishReason;
+  if (finish === 'MAX_TOKENS') throw truncated(tokens);
+  if (finish === 'SAFETY' || finish === 'RECITATION' || finish === 'BLOCKLIST') {
+    throw new AiError(`Gemini corto la respuesta por sus filtros (${finish}). Cambia el enfoque del ejercicio.`, 'server');
+  }
+
+  const text = (candidate?.content?.parts ?? [])
     .map((p) => p.text ?? '')
     .join('')
     .trim();
-  if (!text) throw new AiError('El modelo no devolvio texto. Prueba a bajar `maxTokens` o cambiar de modelo.', 'empty');
+  if (!text) throw new AiError('El modelo no devolvio texto. Sube "Respuesta maxima" o cambia de modelo.', 'empty');
   return text;
 }
 
-async function callOpenAICompatible(config: AiSettings, turns: ChatTurn[], signal?: AbortSignal): Promise<string> {
+async function callOpenAICompatible(
+  config: AiSettings,
+  turns: ChatTurn[],
+  signal?: AbortSignal,
+  options?: ChatOptions,
+): Promise<string> {
   const messages: ChatTurn[] = turns.slice(-12);
+  const tokens = budget(config, options);
   const data = (await postJson(
     `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`,
     {
@@ -186,20 +236,27 @@ async function callOpenAICompatible(config: AiSettings, turns: ChatTurn[], signa
         model: config.model,
         messages,
         temperature: config.temperature,
-        max_tokens: config.maxTokens,
+        max_tokens: tokens,
         stream: false,
       }),
     },
     signal,
-  )) as { choices?: Array<{ message?: { content?: string } }> };
+  )) as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }> };
 
+  if (data.choices?.[0]?.finish_reason === 'length') throw truncated(tokens);
   const text = data.choices?.[0]?.message?.content?.trim() ?? '';
   if (!text) throw new AiError('El modelo no devolvio texto. Revisa el nombre del modelo.', 'empty');
   return text;
 }
 
-async function callOllama(config: AiSettings, turns: ChatTurn[], signal?: AbortSignal): Promise<string> {
+async function callOllama(
+  config: AiSettings,
+  turns: ChatTurn[],
+  signal?: AbortSignal,
+  options?: ChatOptions,
+): Promise<string> {
   const messages: ChatTurn[] = turns.slice(-12);
+  const tokens = budget(config, options);
   const data = (await postJson(
     `${config.baseUrl.replace(/\/+$/, '')}/api/chat`,
     {
@@ -209,22 +266,29 @@ async function callOllama(config: AiSettings, turns: ChatTurn[], signal?: AbortS
         model: config.model,
         messages,
         stream: false,
-        options: { temperature: config.temperature, num_predict: config.maxTokens },
+        ...(options?.json ? { format: 'json' } : {}),
+        options: { temperature: config.temperature, num_predict: tokens },
       }),
     },
     signal,
-  )) as { message?: { content?: string } };
+  )) as { message?: { content?: string }; done_reason?: string };
 
+  if (data.done_reason === 'length') throw truncated(tokens);
   const text = data.message?.content?.trim() ?? '';
   if (!text) throw new AiError('Ollama no devolvio texto. Comprueba que el modelo este descargado (`ollama pull`).', 'empty');
   return text;
 }
 
-export async function chat(config: AiSettings, turns: ChatTurn[], signal?: AbortSignal): Promise<string> {
+export async function chat(
+  config: AiSettings,
+  turns: ChatTurn[],
+  signal?: AbortSignal,
+  options?: ChatOptions,
+): Promise<string> {
   assertConfigured(config);
-  if (config.provider === 'gemini') return callGemini(config, turns, signal);
-  if (config.provider === 'ollama') return callOllama(config, turns, signal);
-  return callOpenAICompatible(config, turns, signal);
+  if (config.provider === 'gemini') return callGemini(config, turns, signal, options);
+  if (config.provider === 'ollama') return callOllama(config, turns, signal, options);
+  return callOpenAICompatible(config, turns, signal, options);
 }
 
 /* -------------------------------------------------------------------------
@@ -264,7 +328,7 @@ export function defaultConfig(provider: AiSettings['provider'] = 'gemini'): AiSe
     baseUrl: defaultAiBaseUrl(provider),
     model: MODEL_PRESETS[provider][0].value,
     temperature: 0.3,
-    maxTokens: 1600,
+    maxTokens: 4096,
     keyStorage: 'local',
   };
 }
